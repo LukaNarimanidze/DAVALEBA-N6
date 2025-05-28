@@ -1,0 +1,162 @@
+import React, { useState, useEffect } from 'react';
+import { Platform, View, Text, StyleSheet, Alert } from 'react-native';
+import * as TaskManager from 'expo-task-manager';
+import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
+import { AppleMaps, GoogleMaps } from 'expo-maps';
+import { getDistance } from 'geolib';
+
+const LOCATION_TASK_NAME = 'BACKGROUND_LOCATION_TASK';
+
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+  if (error) {
+    console.error(error.message);
+    return;
+  }
+  if (data && data.locations && data.locations.length > 0) {
+    const { latitude, longitude } = data.locations[0].coords;
+    if (global.safeZone) {
+      const distance = getDistance(
+        { latitude: global.safeZone.latitude, longitude: global.safeZone.longitude },
+        { latitude, longitude }
+      );
+      if (distance > 200) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "🚨 გასცდი უსაფრთხო ზონას",
+            body: `დაშორდი უსაფრთხო ზონას ${distance.toFixed(0)} მეტრით.`,
+          },
+          trigger: null,
+        });
+      }
+    }
+  }
+});
+
+export default function App() {
+  const [zone, setZone] = useState(null);
+  const [currentLoc, setCurrentLoc] = useState(null);
+  const [distance, setDistance] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert("ნებართვა აუცილებელია", "მდებარეობის ნებართვა სავალდებულოა.");
+        return;
+      }
+      let bgStatus = await Location.requestBackgroundPermissionsAsync();
+      if (bgStatus.status !== 'granted') {
+        Alert.alert("ფონური ნებართვა აუცილებელია", 
+          "უსაფრთხო ზონის თვალყურისდევნისთვის საჭიროა ფონური მდებარეობის ნებართვა.");
+        return;
+      }
+      const { status: notifStatus } = await Notifications.requestPermissionsAsync();
+      if (notifStatus !== 'granted') {
+        Alert.alert("შეტყობინების ნებართვა აუცილებელია", 
+          "ლოკალური შეტყობინებების გაგზავნის ნებართვა სავალდებულოა.");
+      }
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowAlert: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+    })();
+  }, []);
+
+  useEffect(() => {
+    let foregroundSub = null;
+    if (zone) {
+      global.safeZone = zone;
+
+      (async () => {
+        foregroundSub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.Balanced, distanceInterval: 1 },
+          (loc) => {
+            const { latitude, longitude } = loc.coords;
+            setCurrentLoc({ latitude, longitude });
+            const dist = getDistance(
+              { latitude: zone.latitude, longitude: zone.longitude },
+              { latitude, longitude }
+            );
+            setDistance(dist);
+          }
+        );
+
+        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+          accuracy: Location.Accuracy.Balanced,
+          distanceInterval: 1,
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: "უსაფრთხო ზონის მონიტორინგი",
+            notificationBody: "აპლიკაცია აკვირდება თქვენს მდებარეობას",
+            notificationColor: "#4CAF50",
+          },
+          pausesUpdatesAutomatically: false,
+        });
+      })();
+    }
+    return () => {
+      if (foregroundSub) {
+        foregroundSub.remove();
+      }
+      Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+    };
+  }, [zone]);
+
+  const handleMapClick = (e) => {
+    const { latitude, longitude } = e.coordinates;
+    setZone({ latitude, longitude });
+    Alert.alert("უსაფრთხო ზონა დაყენდა", `ცენტრი: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+  };
+
+  const MapView = Platform.OS === 'ios' ? AppleMaps.View : GoogleMaps.View;
+
+  return (
+    <View style={styles.container}>
+      <MapView 
+        style={styles.map}
+        onMapClick={handleMapClick}
+        showsUserLocation
+        userLocationEnabled
+      >
+        {zone && (
+          <MapView.Marker
+            coordinate={zone}
+            title="უსაფრთხო ზონის ცენტრი"
+          />
+        )}
+        {currentLoc && (
+          <MapView.Marker
+            coordinate={currentLoc}
+            title="თქვენი მდებარეობა"
+            pinColor="blue"
+          />
+        )}
+      </MapView>
+      <View style={styles.info}>
+        {zone ? (
+          <>
+            <Text>ზონა: {zone.latitude.toFixed(5)}, {zone.longitude.toFixed(5)}</Text>
+            <Text>დაშორება ზონამდე: {distance ? `${distance.toFixed(1)} მ` : 'მოთვლილია...'}</Text>
+          </>
+        ) : (
+          <Text>შეეხეთ რუკას უსაფრთხო ზონის დასაყენებლად.</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  map: { flex: 1 },
+  info: { 
+    padding: 10, 
+    backgroundColor: '#fff', 
+    borderTopWidth: 1, 
+    borderColor: '#ccc',
+  },
+});
