@@ -140,7 +140,7 @@ export default function App() {
         {zone ? (
           <>
             <Text>ზონა: {zone.latitude.toFixed(5)}, {zone.longitude.toFixed(5)}</Text>
-            <Text>დაშორება ზონამდე: {distance ? `${distance.toFixed(1)} მ` : 'მოთვლილია...'}</Text>
+            <Text>დაშორება ზონამდე: {distance ? `${distance.toFixed(1)} მ` : 'მიმდინარე დათვლა...'}</Text>
           </>
         ) : (
           <Text>შეეხეთ რუკას უსაფრთხო ზონის დასაყენებლად.</Text>
